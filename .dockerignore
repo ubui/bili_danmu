@@ -1,0 +1,9 @@
+.git
+.vscode
+output/
+bin/
+pkg/
+*.md
+Dockerfile*
+.DS_Store
+*.log
