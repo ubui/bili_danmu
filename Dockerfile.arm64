@@ -1,0 +1,109 @@
+# 多阶段构建 Dockerfile for ARM64
+# BiliDanmu - Bilibili 直播弹幕录制工具 (v0.20.18)
+# 基于 https://github.com/qydysky/bili_danmu
+
+# 使用 QEMU 进行 ARM64 交叉编译（如果需要）
+# 本 Dockerfile 可以在任何架构上构建 ARM64 镜像
+
+# 设置构建平台
+ARG BUILDPLATFORM=linux/amd64
+ARG TARGETPLATFORM=linux/arm64
+
+# 第一阶段：构建阶段
+FROM --platform=${BUILDPLATFORM} alpine:3.19 AS builder
+
+# 安装构建工具和 Go
+RUN apk add --no-cache \
+    gcc \
+    musl-dev \
+    go \
+    wget \
+    tar \
+    git
+
+# 设置 Go 模块代理
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GO111MODULE=on
+
+# 设置工作目录
+WORKDIR /app
+
+# 下载项目源码
+RUN git clone --depth 1 --branch v0.20.18 https://github.com/qydysky/bili_danmu.git . || \
+    wget -q https://github.com/qydysky/bili_danmu/archive/refs/tags/v0.20.18.tar.gz && \
+    tar -xzf v0.20.18.tar.gz && \
+    mv bili_danmu-0.20.18/* . && \
+    rm -rf bili_danmu-0.20.18
+
+# 进入 main 目录构建
+WORKDIR /app/main
+
+# 下载依赖
+RUN go mod download
+
+# 根据目标平台设置 Go 环境变量并构建
+RUN if [ "$TARGETPLATFORM" = "linux/arm64" ]; then \
+        CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+            -ldflags="-s -w -trimpath" \
+            -buildvcs=false \
+            -buildmode=exe \
+            -o bili_danmu .; \
+    else \
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+            -ldflags="-s -w -trimpath" \
+            -buildvcs=false \
+            -buildmode=exe \
+            -o bili_danmu .; \
+    fi
+
+# 第二阶段：运行阶段
+FROM --platform=${TARGETPLATFORM} alpine:3.19
+
+# 设置镜像源
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories || true
+
+# 设置标签
+LABEL maintainer="CodeBuddy <codebuddy@example.com>"
+LABEL description="Bilibili 直播弹幕录制工具 - ARM64 版本"
+LABEL version="0.20.18"
+LABEL source="https://github.com/qydysky/bili_danmu"
+LABEL architecture="arm64"
+
+# 设置工作目录
+WORKDIR /app
+
+# 安装必要的运行时依赖
+RUN apk add --no-cache ca-certificates tzdata ffmpeg
+
+# 设置时区
+ENV TZ=Asia/Shanghai
+
+# 从构建阶段复制可执行文件
+COPY --from=builder /app/main/bili_danmu /app/bili_danmu
+
+# 创建必要的目录结构
+RUN mkdir -p /app/config /app/data /app/logs
+
+# 从构建阶段复制配置文件示例
+COPY --from=builder /app/main/config/config_K_v.json /app/config/config_K_v.example.json
+COPY --from=builder /app/main/config/config_tts.json /app/config/config_tts.example.json
+COPY --from=builder /app/main/config/config_auto_reply.json /app/config/config_auto_reply.example.json
+COPY --from=builder /app/main/config/config_F.json /app/config/config_F.example.json
+
+# 设置环境变量
+ENV CONFIG_PATH=/app/config
+ENV DATA_PATH=/app/data
+ENV LOG_PATH=/app/logs
+
+# 暴露端口
+EXPOSE 8080
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/ || exit 1
+
+# 设置容器启动命令
+ENTRYPOINT ["/app/bili_danmu"]
+
+# 默认参数
+CMD ["--help"]
