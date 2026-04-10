@@ -4,27 +4,29 @@
 # 第一阶段：构建阶段
 FROM --platform=linux/arm64 golang:1.26-alpine AS builder
 
+# 安装必要的工具
+RUN apk add --no-cache git
+
 WORKDIR /app
 
-# 从构建上下文复制源码（已经由 actions/checkout 下载）
+# 从构建上下文复制源码
 COPY . .
 
 # 设置 Go 模块代理
 ENV GOPROXY=https://goproxy.cn,direct
 ENV GO111MODULE=on
 
-# 进入 main 目录构建
+# 进入 main 目录
 WORKDIR /app/main
 
+# 清理缓存，确保全新下载
+RUN go clean -modcache || true
+
 # 下载依赖
-RUN go mod download
+RUN go mod download || go mod download -x || true
 
 # 构建应用
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
-    -ldflags="-s -w -trimpath" \
-    -buildvcs=false \
-    -buildmode=exe \
-    -o bili_danmu .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o bili_danmu .
 
 # 第二阶段：运行阶段
 FROM --platform=linux/arm64 alpine:3.19
@@ -42,10 +44,7 @@ COPY --from=builder /app/main/bili_danmu /app/bili_danmu
 
 RUN mkdir -p /app/config /app/data /app/logs
 
-COPY --from=builder /app/main/config/config_K_v.json /app/config/config_K_v.example.json
-COPY --from=builder /app/main/config/config_tts.json /app/config/config_tts.example.json
-COPY --from=builder /app/main/config/config_auto_reply.json /app/config/config_auto_reply.example.json
-COPY --from=builder /app/main/config/config_F.json /app/config/config_F.example.json
+COPY --from=builder /app/main/config/*.json /app/config/
 
 ENV CONFIG_PATH=/app/config
 ENV DATA_PATH=/app/data
