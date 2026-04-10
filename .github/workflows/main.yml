@@ -1,0 +1,76 @@
+name: Build ARM64 Docker Image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/bili-danmu
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha,prefix=
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.arm64
+          platforms: linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push with simple approach
+        if: false  # 禁用备用方案，使用上面的多阶段构建
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.simple
+          platforms: linux/arm64
+          push: false
+          load: true
+          tags: |
+            bili-danmu:arm64-local
+            ghcr.io/${{ github.repository_owner }}/bili-danmu:arm64-${{ github.sha }}
+          outputs: type=tar,dest=bili-danmu-arm64.tar
+
+      - name: Upload artifacts
+        if: false  # 禁用到本地文件，需要推送到 registry
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: bili-danmu-arm64.tar
+          retention-days: 7
